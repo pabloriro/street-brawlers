@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Street Brawlers</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div id="wrap">
+  <canvas id="game" width="960" height="540"></canvas>
+
+  <div id="menu">
+    <h1>STREET<span>BRAWLERS</span></h1>
+    <div class="buttons">
+      <button id="btn1p">1 JUGADOR (vs CPU)</button>
+      <button id="btn2p">2 JUGADORES</button>
+    </div>
+    <label class="diff">Dificultad CPU:
+      <select id="difficulty">
+        <option value="0.4">Fácil</option>
+        <option value="0.7" selected>Normal</option>
+        <option value="1">Difícil</option>
+      </select>
+    </label>
+    <div class="controls">
+      <div>
+        <h3>Jugador 1</h3>
+        <p><b>A / D</b> mover &nbsp; <b>W</b> saltar &nbsp; <b>S</b> agacharse</p>
+        <p><b>F</b> puño &nbsp; <b>G</b> patada &nbsp; <b>H</b> Hadouken</p>
+      </div>
+      <div>
+        <h3>Jugador 2</h3>
+        <p><b>← / →</b> mover &nbsp; <b>↑</b> saltar &nbsp; <b>↓</b> agacharse</p>
+        <p><b>K</b> puño &nbsp; <b>L</b> patada &nbsp; <b>J</b> Hadouken</p>
+      </div>
+    </div>
+    <p class="tip">Mantén la dirección contraria al rival para bloquear (los barridos exigen bloquear agachado). El Hadouken cuesta 30 de energía.</p>
+  </div>
+</div>
+<script src="game.js"></script>
+</body>
+</html>
