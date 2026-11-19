@@ -67,6 +67,44 @@ const ATK = {
 };
 const SPECIAL_COST = 30;
 
+// ---------------------------------------------------------------- utilidades de dibujo
+function shade(hex, amt) {
+  const n = parseInt(hex.slice(1), 16);
+  const c = v => Math.max(0, Math.min(255, v));
+  return 'rgb(' + c((n >> 16) + amt) + ',' + c(((n >> 8) & 255) + amt) + ',' + c((n & 255) + amt) + ')';
+}
+function baseHex(col) { return col; }
+// segmento cónico con sombreado de volumen (luz desde arriba/delante)
+function taperPath(a, b, ra, rb) {
+  ctx.beginPath();
+  const dx = b.x - a.x, dy = b.y - a.y, L = Math.hypot(dx, dy) || 1, nx = dy / L, ny = -dx / L;
+  ctx.moveTo(a.x + nx * ra, a.y + ny * ra); ctx.lineTo(b.x + nx * rb, b.y + ny * rb);
+  ctx.lineTo(b.x - nx * rb, b.y - ny * rb); ctx.lineTo(a.x - nx * ra, a.y - ny * ra); ctx.closePath();
+  ctx.moveTo(a.x + ra, a.y); ctx.arc(a.x, a.y, ra, 0, 7);
+  ctx.moveTo(b.x + rb, b.y); ctx.arc(b.x, b.y, rb, 0, 7);
+}
+function drawSegs(list) {
+  ctx.fillStyle = 'rgba(12,8,18,.88)';
+  for (const s of list) { taperPath(s.a, s.b, s.ra + 1.8, s.rb + 1.8); ctx.fill('nonzero'); }
+  for (const s of list) {
+    const dx = s.b.x - s.a.x, dy = s.b.y - s.a.y, L = Math.hypot(dx, dy) || 1, nx = dy / L, ny = -dx / L;
+    const r = Math.max(s.ra, s.rb);
+    const mx = (s.a.x + s.b.x) / 2, my = (s.a.y + s.b.y) / 2;
+    const g = ctx.createLinearGradient(mx + nx * r, my + ny * r, mx - nx * r, my - ny * r);
+    g.addColorStop(0, shade(s.col, 45)); g.addColorStop(0.4, s.col); g.addColorStop(1, shade(s.col, -60));
+    ctx.fillStyle = g; taperPath(s.a, s.b, s.ra, s.rb); ctx.fill('nonzero');
+  }
+}
+// cinemática inversa de 2 huesos (sign=1: codo/rodilla hacia delante-arriba)
+function ik(a, b, l1, l2, sign) {
+  const dx = b.x - a.x, dy = b.y - a.y;
+  let d = Math.hypot(dx, dy) || 1; const maxd = l1 + l2 - 0.5; let end = b;
+  if (d > maxd) { end = { x: a.x + dx / d * maxd, y: a.y + dy / d * maxd }; d = maxd; }
+  const ux = (end.x - a.x) / d, uy = (end.y - a.y) / d;
+  const k = (l1 * l1 - l2 * l2 + d * d) / (2 * d), h = Math.sqrt(Math.max(0, l1 * l1 - k * k));
+  return { mid: { x: a.x + ux * k + uy * h * sign, y: a.y + uy * k - ux * h * sign }, end };
+}
+
 // ---------------------------------------------------------------- luchador
 class Fighter {
   constructor(name, side, look, ctrl) {
@@ -180,7 +218,7 @@ class Fighter {
       ctx.translate(0, -10 * k); ctx.rotate(-k * Math.PI / 2);
     } else if (this.state === 'hit') ctx.rotate(-0.14);
 
-    const hipY = cr ? -42 : -72, shY = cr ? -88 : -122, headY = shY - 20;
+    const hipY = cr ? -44 : -78, shY = cr ? -88 : -122, headY = shY - 20;
     let fFoot = { x: 16, y: 0 }, bFoot = { x: -16, y: 0 };
     let fHand = { x: 34, y: shY + 14 }, bHand = { x: 20, y: shY + 4 };
     let bob = 0;
@@ -219,48 +257,155 @@ class Fighter {
       fHand = { x: -10, y: shY + 24 }; bHand = { x: -26, y: shY + 14 };
     }
 
-    const gi = look.gi, skin = look.skin;
-    const limb = (a, b, c, w, col) => {
-      ctx.strokeStyle = col; ctx.lineWidth = w; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
-      ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.lineTo(c.x, c.y); ctx.stroke();
+    const gi = look.gi, skin = look.skin, pantsC = look.pants;
+    const hip = { x: 0, y: hipY + bob };
+    const shoulder = { x: 5, y: shY + 8 + bob };
+    const OUT = 'rgba(12,8,18,.88)';
+    const hx = 6, hy = headY + bob;
+    const attacking = this.state === 'attack';
+    const stunned = this.state === 'hit' || this.ko;
+
+    const arm = (hand, glove) => {
+      const { mid: elbow, end: hd } = ik(shoulder, hand, 28, 28, -1);
+      const wrap = { x: elbow.x + (hd.x - elbow.x) * 0.5, y: elbow.y + (hd.y - elbow.y) * 0.5 };
+      drawSegs([
+        { a: shoulder, b: elbow, ra: 12, rb: 9.5, col: skin },
+        { a: elbow, b: hd, ra: 9, rb: 6.8, col: skin },
+        { a: wrap, b: hd, ra: 8.2, rb: 8.6, col: glove }
+      ]);
+      ctx.fillStyle = OUT; ctx.beginPath(); ctx.arc(hd.x, hd.y, 11, 0, 7); ctx.fill();
+      const g = ctx.createRadialGradient(hd.x + 3, hd.y - 3, 1, hd.x, hd.y, 10);
+      g.addColorStop(0, shade(glove, 60)); g.addColorStop(1, shade(glove, -50));
+      ctx.fillStyle = g; ctx.beginPath(); ctx.arc(hd.x, hd.y, 9.5, 0, 7); ctx.fill();
+      ctx.strokeStyle = 'rgba(0,0,0,.35)'; ctx.lineWidth = 1.2;
+      ctx.beginPath(); ctx.moveTo(hd.x + 2, hd.y - 8); ctx.lineTo(hd.x + 5, hd.y + 6); ctx.stroke();
     };
-    const leg = (foot, col) => {
-      const hip = { x: 0, y: hipY + bob };
-      const kneeBend = cr ? 12 : air ? 6 : 6;
-      const knee = { x: (hip.x + foot.x) / 2 + kneeBend, y: (hip.y + foot.y) / 2 + (cr ? 4 : 0) };
-      limb(hip, knee, foot, 15, col);
-      // pie
-      ctx.strokeStyle = skin; ctx.lineWidth = 9;
-      ctx.beginPath(); ctx.moveTo(foot.x, foot.y - 2); ctx.lineTo(foot.x + 10, foot.y - 2); ctx.stroke();
+    const leg = foot => {
+      const { mid: knee, end: ft } = ik(hip, foot, 42, 42, 1);
+      const cuff = { x: knee.x + (ft.x - knee.x) * 0.55, y: knee.y + (ft.y - knee.y) * 0.55 };
+      drawSegs([
+        { a: knee, b: ft, ra: 9.5, rb: 6.8, col: skin },
+        { a: hip, b: knee, ra: 18, rb: 14, col: pantsC },
+        { a: knee, b: cuff, ra: 14.5, rb: 12.5, col: pantsC }
+      ]);
+      // pie descalzo con suela
+      ctx.fillStyle = OUT; ctx.beginPath(); ctx.ellipse(ft.x + 7, ft.y - 4, 15, 7.5, 0, 0, 7); ctx.fill();
+      ctx.fillStyle = shade(skin, -10); ctx.beginPath(); ctx.ellipse(ft.x + 7, ft.y - 4.5, 13.5, 6, 0, 0, 7); ctx.fill();
+      ctx.fillStyle = 'rgba(255,255,255,.18)'; ctx.beginPath(); ctx.ellipse(ft.x + 9, ft.y - 7, 8, 2, 0, 0, 7); ctx.fill();
     };
-    const arm = (hand, col, glove) => {
-      const sh = { x: 4, y: shY + 6 + bob };
-      const elbow = { x: (sh.x + hand.x) / 2, y: (sh.y + hand.y) / 2 + 12 };
-      limb(sh, elbow, hand, 11, col);
-      ctx.fillStyle = glove; ctx.beginPath(); ctx.arc(hand.x, hand.y, 9, 0, 7); ctx.fill();
+    const torso = () => {
+      const tp = () => {
+        ctx.beginPath(); ctx.moveTo(-15, shoulder.y - 6);
+        ctx.quadraticCurveTo(7, shoulder.y - 13, 23, shoulder.y - 2);
+        ctx.quadraticCurveTo(28, shoulder.y + 22, 16, hip.y - 10);
+        ctx.lineTo(17, hip.y + 8); ctx.lineTo(-17, hip.y + 8);
+        ctx.quadraticCurveTo(-22, shoulder.y + 20, -15, shoulder.y - 6); ctx.closePath();
+      };
+      tp(); ctx.lineWidth = 3.5; ctx.strokeStyle = OUT; ctx.lineJoin = 'round'; ctx.stroke();
+      let g = ctx.createLinearGradient(-18, 0, 26, 0);
+      g.addColorStop(0, shade(gi, -70)); g.addColorStop(0.55, gi); g.addColorStop(1, shade(gi, 35));
+      ctx.fillStyle = g; tp(); ctx.fill();
+      // pecho al descubierto (cuello en V)
+      g = ctx.createLinearGradient(0, 0, 22, 0);
+      g.addColorStop(0, shade(skin, -35)); g.addColorStop(0.6, skin); g.addColorStop(1, shade(skin, 25));
+      ctx.fillStyle = g; ctx.beginPath();
+      ctx.moveTo(-1, shoulder.y - 9); ctx.lineTo(20, shoulder.y - 4);
+      ctx.quadraticCurveTo(22, shoulder.y + 14, 11, hip.y - 7); ctx.closePath(); ctx.fill();
+      ctx.strokeStyle = shade(gi, -80); ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.moveTo(-1, shoulder.y - 9); ctx.lineTo(11, hip.y - 7); ctx.lineTo(20, shoulder.y - 4); ctx.stroke();
+      // músculos
+      ctx.strokeStyle = 'rgba(0,0,0,.28)'; ctx.lineWidth = 1.5;
+      ctx.beginPath(); ctx.ellipse(13, shoulder.y + 8, 7, 4.5, 0.15, 0.2, Math.PI - 0.2); ctx.stroke();
+      for (let i = 0; i < 3; i++) {
+        const yy = shoulder.y + 19 + i * 6;
+        if (yy < hip.y - 10) { ctx.beginPath(); ctx.moveTo(8, yy); ctx.lineTo(14, yy + 0.5); ctx.stroke(); }
+      }
+      // cinturón y nudo
+      ctx.fillStyle = OUT; ctx.fillRect(-18, hip.y - 10, 36, 13);
+      g = ctx.createLinearGradient(0, hip.y - 8, 0, hip.y + 1);
+      g.addColorStop(0, shade(look.belt, 45)); g.addColorStop(1, shade(look.belt, -15));
+      ctx.fillStyle = g; ctx.fillRect(-16.5, hip.y - 8.5, 33, 10);
+      const sw = Math.sin(this.anim * 0.12) * 2;
+      ctx.strokeStyle = look.belt; ctx.lineWidth = 4.5; ctx.lineCap = 'round';
+      ctx.beginPath(); ctx.moveTo(11, hip.y - 3); ctx.lineTo(7 + sw, hip.y + 17); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(11, hip.y - 3); ctx.lineTo(16 - sw, hip.y + 15); ctx.stroke();
+      ctx.fillStyle = shade(look.belt, 20); ctx.beginPath(); ctx.arc(11, hip.y - 3, 4.5, 0, 7); ctx.fill();
+    };
+    const head = () => {
+      // cuello
+      drawSegs([{ a: { x: 2, y: shoulder.y - 8 }, b: { x: hx - 1, y: hy + 12 }, ra: 10, rb: 8.5, col: skin }]);
+      const skinG = () => {
+        const g = ctx.createLinearGradient(hx - 16, 0, hx + 17, 0);
+        g.addColorStop(0, shade(skin, -50)); g.addColorStop(0.5, skin); g.addColorStop(1, shade(skin, 28));
+        return g;
+      };
+      // orejas
+      ctx.fillStyle = shade(skin, -30); ctx.strokeStyle = OUT; ctx.lineWidth = 1.5;
+      ctx.beginPath(); ctx.ellipse(hx - 8, hy + 2, 3.5, 5.5, 0, 0, 7); ctx.fill(); ctx.stroke();
+      // cráneo + mandíbula
+      const shape = () => {
+        ctx.beginPath(); ctx.moveTo(hx - 14, hy - 4);
+        ctx.quadraticCurveTo(hx - 14, hy - 19, hx + 2, hy - 18);
+        ctx.quadraticCurveTo(hx + 17, hy - 17, hx + 16, hy - 2);
+        ctx.lineTo(hx + 16, hy + 7);
+        ctx.quadraticCurveTo(hx + 14, hy + 17, hx + 5, hy + 18);
+        ctx.quadraticCurveTo(hx - 9, hy + 17, hx - 12, hy + 6);
+        ctx.closePath();
+      };
+      shape(); ctx.strokeStyle = OUT; ctx.lineWidth = 2.5; ctx.stroke();
+      ctx.fillStyle = skinG(); ctx.fill();
+      // sombra bajo la mandíbula
+      ctx.fillStyle = 'rgba(0,0,0,.16)'; ctx.beginPath();
+      ctx.ellipse(hx + 2, hy + 17, 10, 3.5, 0, 0, 7); ctx.fill();
+      // pelo
+      const pts = look.hairStyle === 'swept'
+        ? [[16,-9],[17,-18],[8,-23],[2,-27],[-8,-26],[-17,-20],[-22,-12],[-18,-2],[-14,6],[-9,-2],[3,-12]]
+        : [[15,-7],[14,-17],[7,-20],[9,-29],[-1,-22],[-7,-31],[-10,-21],[-21,-25],[-17,-11],[-21,-3],[-14,7],[-9,-2],[2,-11]];
+      ctx.beginPath(); pts.forEach((p, i) => i ? ctx.lineTo(hx + p[0], hy + p[1]) : ctx.moveTo(hx + p[0], hy + p[1]));
+      ctx.closePath(); ctx.strokeStyle = OUT; ctx.lineWidth = 2; ctx.stroke();
+      const hg = ctx.createLinearGradient(0, hy - 30, 0, hy);
+      hg.addColorStop(0, shade(look.hair, 50)); hg.addColorStop(1, shade(look.hair, -15));
+      ctx.fillStyle = hg; ctx.fill();
+      // vincha
+      ctx.fillStyle = look.band; ctx.strokeStyle = OUT; ctx.lineWidth = 1.2;
+      const s1 = Math.sin(this.anim * 0.18) * 4, s2 = Math.cos(this.anim * 0.15) * 5;
+      ctx.beginPath(); ctx.moveTo(hx - 14, hy - 10);
+      ctx.quadraticCurveTo(hx + 2, hy - 15, hx + 16, hy - 9); ctx.lineTo(hx + 16, hy - 4);
+      ctx.quadraticCurveTo(hx + 2, hy - 10, hx - 14, hy - 5); ctx.closePath(); ctx.fill(); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(hx - 13, hy - 9);
+      ctx.quadraticCurveTo(hx - 24, hy - 9 + s1, hx - 38, hy - 3 + s2); ctx.lineTo(hx - 35, hy + 3 + s2);
+      ctx.quadraticCurveTo(hx - 24, hy - 3 + s1, hx - 13, hy - 4); ctx.closePath(); ctx.fill(); ctx.stroke();
+      // cara
+      ctx.strokeStyle = shade(look.hair, -10); ctx.lineWidth = 2.6; ctx.lineCap = 'round';
+      ctx.beginPath();
+      if (stunned) { ctx.moveTo(hx + 5, hy - 3); ctx.lineTo(hx + 15, hy - 5); } else { ctx.moveTo(hx + 5, hy - 5); ctx.lineTo(hx + 15, hy - 2); }
+      ctx.stroke();
+      ctx.lineWidth = 1.5; ctx.strokeStyle = '#111';
+      if (stunned) {
+        ctx.beginPath(); ctx.moveTo(hx + 8, hy + 1); ctx.lineTo(hx + 14, hy + 3);
+        ctx.moveTo(hx + 8, hy + 3); ctx.lineTo(hx + 14, hy + 1); ctx.stroke();
+      } else {
+        ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.ellipse(hx + 10.5, hy + 1.5, 3.6, 2.3, 0, 0, 7); ctx.fill(); ctx.stroke();
+        ctx.fillStyle = '#111'; ctx.beginPath(); ctx.arc(hx + 11.6, hy + 1.5, 1.6, 0, 7); ctx.fill();
+      }
+      ctx.strokeStyle = shade(skin, -60); ctx.lineWidth = 1.6;
+      ctx.beginPath(); ctx.moveTo(hx + 15, hy + 2); ctx.lineTo(hx + 18.5, hy + 8); ctx.lineTo(hx + 14.5, hy + 9); ctx.stroke();
+      if (attacking || stunned) {
+        ctx.fillStyle = '#3a0a0a'; ctx.beginPath(); ctx.ellipse(hx + 11, hy + 13, 4.5, 3.4, 0, 0, 7); ctx.fill();
+        ctx.fillStyle = '#fff'; ctx.fillRect(hx + 8, hy + 10.6, 7, 1.6);
+      } else {
+        ctx.strokeStyle = '#4a1d1d'; ctx.lineWidth = 1.8;
+        ctx.beginPath(); ctx.moveTo(hx + 7, hy + 12.5); ctx.lineTo(hx + 15, hy + 11.5); ctx.stroke();
+      }
     };
 
-    // capa trasera
-    leg(bFoot, look.pants);
-    arm(bHand, skin, look.glove);
-    // torso
-    ctx.strokeStyle = gi; ctx.lineWidth = 30; ctx.lineCap = 'round';
-    ctx.beginPath(); ctx.moveTo(0, hipY + bob); ctx.lineTo(2, shY + 8 + bob); ctx.stroke();
-    ctx.fillStyle = look.belt; ctx.fillRect(-15, hipY - 8 + bob, 30, 8);
-    ctx.fillStyle = skin; ctx.fillRect(-3, shY - 6 + bob, 8, 12);
-    // pierna delantera
-    leg(fFoot, look.pants);
-    // cabeza
-    ctx.fillStyle = skin; ctx.beginPath(); ctx.arc(5, headY + bob, 16, 0, 7); ctx.fill();
-    ctx.fillStyle = look.hair;
-    ctx.beginPath(); ctx.arc(3, headY - 3 + bob, 17, Math.PI * 1.02, Math.PI * 2.05); ctx.fill();
-    ctx.fillStyle = look.band; ctx.fillRect(-12, headY - 8 + bob, 34, 5);
-    ctx.beginPath(); ctx.moveTo(-12, headY - 6 + bob); ctx.lineTo(-26, headY - 1 + bob + Math.sin(this.anim * 0.2) * 3);
-    ctx.lineTo(-12, headY - 2 + bob); ctx.fill();
-    ctx.fillStyle = '#111'; ctx.fillRect(11, headY - 1 + bob, 4, 4);
-    if (this.state === 'hit' || this.ko) { ctx.fillRect(9, headY + 8 + bob, 8, 2); }
-    // brazo delantero
-    arm(fHand, skin, look.glove);
+    // capa trasera -> delantera
+    leg(bFoot);
+    arm(bHand, look.glove);
+    torso();
+    leg(fFoot);
+    head();
+    arm(fHand, look.glove);
 
     // aura del hadouken
     if (this.state === 'attack' && this.atk && this.atk.spawn !== undefined) {
@@ -274,9 +419,9 @@ class Fighter {
 
 // ---------------------------------------------------------------- estado del juego
 const p1 = new Fighter('KAITO', 0,
-  { gi:'#d63a2f', pants:'#f1f1f1', belt:'#111', skin:'#f0b98a', hair:'#1a1a1a', band:'#fff', glove:'#d63a2f' }, CTRL1);
+  { gi:'#d63a2f', pants:'#f1f1f1', belt:'#111', skin:'#f0b98a', hair:'#1a1a1a', hairStyle:'spiky', band:'#f2f2f2', glove:'#c92d22' }, CTRL1);
 const p2 = new Fighter('BRUNO', 1,
-  { gi:'#2a62d6', pants:'#e9e9e9', belt:'#222', skin:'#e2a577', hair:'#e8c33a', band:'#d63a2f', glove:'#2a62d6' }, CTRL2);
+  { gi:'#2a62d6', pants:'#e9e9e9', belt:'#222', skin:'#e2a577', hair:'#e8c33a', hairStyle:'swept', band:'#d63a2f', glove:'#2a62d6' }, CTRL2);
 
 let projectiles = [], particles = [], bursts = [];
 let phase = 'menu', phaseT = 0, round = 1, timer = 99, tick = 0, msg = '', sub = '';
